@@ -1,0 +1,159 @@
+{
+  "last_updated_by": "codex",
+  "last_updated_at": "2026-03-23T18:04:50Z",
+  "current_phase": "implementation",
+  "session_number": "6a",
+  "status": "READY_FOR_BUILD",
+  "spec_version": "1.0",
+  "modules": {
+    "db_models": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/models/enums.py",
+        "src/app/models/base.py",
+        "src/app/models/deal.py",
+        "src/app/models/criteria.py"
+      ],
+      "blockers": []
+    },
+    "schemas": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/schemas/deal.py",
+        "src/app/schemas/criteria.py"
+      ],
+      "blockers": []
+    },
+    "config": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/config.py"
+      ],
+      "blockers": []
+    },
+    "extraction_service": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/services/pdf_parser.py",
+        "src/app/services/pii_scrubber.py",
+        "src/app/services/extraction_prompt.py",
+        "src/app/services/llm_client.py",
+        "src/app/services/extraction_service.py"
+      ],
+      "blockers": []
+    },
+    "scoring_engine": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/services/criteria_evaluator.py",
+        "src/app/services/scoring_service.py"
+      ],
+      "blockers": []
+    },
+    "ingestion_service": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/database.py",
+        "src/app/services/ingestion_service.py"
+      ],
+      "blockers": []
+    },
+    "dashboard_api": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/main.py",
+        "src/app/api/deps.py",
+        "src/app/api/deals.py",
+        "src/app/api/criteria.py"
+      ],
+      "blockers": []
+    },
+    "minimal_ui": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "frontend/src/lib/api.ts",
+        "frontend/src/components/Layout.tsx",
+        "frontend/src/components/StatusBadge.tsx",
+        "frontend/src/pages/DealList.tsx",
+        "frontend/src/pages/DealDetail.tsx",
+        "frontend/src/pages/Upload.tsx",
+        "frontend/src/pages/Criteria.tsx",
+        "frontend/src/App.tsx",
+        "frontend/src/main.tsx",
+        "frontend/vite.config.ts"
+      ],
+      "blockers": []
+    },
+    "alembic_migrations": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "alembic.ini",
+        "alembic/env.py",
+        "alembic/versions/1ed7e8f2e432_initial_schema.py"
+      ],
+      "blockers": []
+    }
+  },
+  "open_blockers": [
+    {
+      "id": "C-001",
+      "source": "codex",
+      "session": 1,
+      "description": "Deal deduplication is not tenant-scoped at the database constraint level.",
+      "severity": "high",
+      "resolved": true,
+      "resolved_in_session": "2a",
+      "validated_in_session": 2
+    },
+    {
+      "id": "C-002",
+      "source": "codex",
+      "session": 1,
+      "description": "Criteria config versioning is not enforced per tenant at the database constraint level.",
+      "severity": "medium",
+      "resolved": true,
+      "resolved_in_session": "2a",
+      "validated_in_session": 2
+    },
+    {
+      "id": "C-003",
+      "source": "codex",
+      "session": 5,
+      "description": "Structured exception responses include request_id in the body but omit the X-Request-ID response header.",
+      "severity": "medium",
+      "resolved": true,
+      "resolved_in_session": "5a",
+      "validated_in_session": "5a"
+    },
+    {
+      "id": "C-004",
+      "source": "claude",
+      "session": 6,
+      "description": "Session 5a handoff incorrectly marked MVP as feature-complete, missing Build Order item 6 (Minimal UI). Corrected in Session 6.",
+      "severity": "low",
+      "resolved": true,
+      "resolved_in_session": 6,
+      "validated_in_session": null
+    },
+    {
+      "id": "C-005",
+      "source": "codex",
+      "session": 6,
+      "description": "Frontend lint fails in frontend/src/pages/DealList.tsx because of synchronous setState inside useEffect.",
+      "severity": "medium",
+      "resolved": true,
+      "resolved_in_session": "6a",
+      "validated_in_session": "6a"
+    }
+  ],
+  "next_action": "Human or Claude: MVP is feature-complete and fully revalidated. Next priority is JWT auth, rate limiting, and production hardening."
+}
