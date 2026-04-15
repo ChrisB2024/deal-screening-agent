@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models.enums import AuditAction, ConfidenceLevel, DealStatus
+from app.models.enums import ConfidenceLevel, DealStatus
 from app.services import extraction_service
 from app.services.extraction_service import ExtractionResult, extract_deal
 from app.services.llm_client import LLMExtractionError
@@ -111,8 +111,8 @@ def test_extract_deal_marks_deal_extracted_and_logs_audit(monkeypatch: pytest.Mo
     assert db.flushed == 1
     assert len([entry for entry in db.added if entry.__class__.__name__ == "ExtractedField"]) == 6
     assert [entry.action for entry in db.added if hasattr(entry, "action")] == [
-        AuditAction.EXTRACTION_STARTED,
-        AuditAction.EXTRACTION_COMPLETED,
+        "EXTRACTION_STARTED",
+        "EXTRACTION_COMPLETED",
     ]
 
 
@@ -142,8 +142,8 @@ def test_extract_deal_marks_failed_when_threshold_not_met(monkeypatch: pytest.Mo
     assert deal.status is DealStatus.FAILED
     assert deal.retry_count == 1
     assert [entry.action for entry in db.added if hasattr(entry, "action")] == [
-        AuditAction.EXTRACTION_STARTED,
-        AuditAction.EXTRACTION_FAILED,
+        "EXTRACTION_STARTED",
+        "EXTRACTION_FAILED",
     ]
 
 

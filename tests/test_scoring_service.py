@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models.enums import AuditAction, ConfidenceLevel, CriterionType, DealStatus, FieldExtractionStatus
+from app.models.enums import ConfidenceLevel, CriterionType, DealStatus, FieldExtractionStatus
 from app.services.criteria_evaluator import CriterionEvalResult
 from app.services.scoring_service import (
     ScoringResult,
@@ -178,7 +178,7 @@ def test_score_deal_persists_score_and_transitions_status(monkeypatch: pytest.Mo
     assert deal.status is DealStatus.SCORED
     assert db.flushed == 1
     assert [entry.action for entry in db.added if hasattr(entry, "action")] == [
-        AuditAction.SCORING_COMPLETED
+        "SCORING_COMPLETED"
     ]
     stored_scores = [entry for entry in db.added if entry.__class__.__name__ == "DealScore"]
     assert len(stored_scores) == 1

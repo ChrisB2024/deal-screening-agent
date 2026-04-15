@@ -19,10 +19,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.deal import AuditLog, Deal
-from app.models.enums import AuditAction, DealStatus
-from app.services.extraction_service import extract_deal
-from app.services.scoring_service import score_deal
+from app.models.deal import DealAuditLog, Deal
+from app.models.enums import DealStatus
 
 logger = logging.getLogger(__name__)
 
@@ -122,49 +120,37 @@ async def ingest_deal(
     db.add(deal)
 
     # 7. Audit log
-    audit = AuditLog(
+    audit = DealAuditLog(
+        audit_id=str(uuid.uuid4()),
         deal_id=deal_id,
-        tenant_id=tenant_id,
-        action=AuditAction.DEAL_UPLOADED,
-        from_status=None,
-        to_status=DealStatus.UPLOADED,
-        detail=f"Ingested {filename} ({len(file_content)} bytes) via {source_channel}",
+        tenant_id=str(tenant_id),
+        actor_type="system",
+        action="DEAL_UPLOADED",
+        before_state=None,
+        after_state=DealStatus.UPLOADED.value,
+        metadata_={"filename": filename, "file_size_bytes": len(file_content), "source_channel": source_channel},
     )
     db.add(audit)
 
-    # Flush to persist deal before extraction
+    # Flush to persist deal before enqueuing
     await db.flush()
 
-    # 8. Run extraction + scoring pipeline inline (MVP — no job queue yet)
-    # Spec says async queue, but Appendix B chose "PostgreSQL advisory locks (MVP simplicity)"
-    # For MVP, we run synchronously. Queue can be swapped in later.
-    extraction_result = await extract_deal(db, deal_id, tenant_id)
+    # 8. Enqueue extraction job for async processing
+    from app.background_jobs import enqueue
 
-    if extraction_result.success:
-        scoring_result = await score_deal(db, deal_id, tenant_id)
-        # Reload deal to get final status
-        await db.refresh(deal)
+    await enqueue(
+        db,
+        job_type="extraction",
+        payload={"deal_id": str(deal_id), "tenant_id": str(tenant_id)},
+        idempotency_key=f"extraction:{deal_id}",
+        trace_context=None,
+        tenant_id=str(tenant_id),
+    )
 
-        if scoring_result.success:
-            return IngestionResult(
-                deal_id=deal_id,
-                status=deal.status,
-                message=f"Deal ingested and scored {scoring_result.score}/100 "
-                f"(confidence: {scoring_result.confidence.value}).",
-            )
-
-        return IngestionResult(
-            deal_id=deal_id,
-            status=deal.status,
-            message=f"Deal extracted but scoring failed: {scoring_result.error}",
-        )
-
-    # Extraction failed — deal is in FAILED status
-    await db.refresh(deal)
     return IngestionResult(
         deal_id=deal_id,
-        status=deal.status,
-        message=f"Deal uploaded but extraction failed: {extraction_result.error}",
+        status=DealStatus.UPLOADED,
+        message="Deal uploaded. Extraction and scoring queued for processing.",
     )
 
 

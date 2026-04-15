@@ -41,16 +41,30 @@ class _EmptyDB:
         return _EmptyResult()
 
 
+def _auth_override(tenant_id: str | None = None, user_id: str | None = None):
+    from app.auth.middleware import AuthContext
+
+    async def _override():
+        return AuthContext(
+            user_id=user_id or f"usr_{uuid.uuid4().hex}",
+            tenant_id=tenant_id or str(uuid.uuid4()),
+            session_id=f"sess_{uuid.uuid4().hex}",
+            roles=[],
+        )
+
+    return _override
+
+
 def test_request_id_middleware_adds_header():
     main, deals, criteria, deps, database = _import_api_modules()
     main.app.dependency_overrides[database.get_db] = lambda: iter(())
     client = TestClient(main.app)
 
-    response = client.get("/health")
+    response = client.get("/health/liveness")
 
     assert response.status_code == 200
     assert "X-Request-ID" in response.headers
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "alive"}
 
 
 def test_global_exception_handler_returns_structured_error():
@@ -71,28 +85,19 @@ def test_global_exception_handler_returns_structured_error():
     assert response.headers["X-Request-ID"] == body["request_id"]
 
 
-def test_header_deps_accept_valid_uuids_and_reject_invalid_or_missing():
+def test_protected_route_requires_auth_dependency():
     main, deals, criteria, deps, database = _import_api_modules()
+    from app.auth.middleware import require_auth
+
     async def _override_db():
         yield _EmptyDB()
 
     main.app.dependency_overrides[database.get_db] = _override_db
     client = TestClient(main.app)
 
-    tenant_id = str(uuid.uuid4())
-    user_id = str(uuid.uuid4())
-
-    ok = client.get(
-        "/api/v1/deals/",
-        headers={"X-Tenant-ID": tenant_id, "X-User-ID": user_id},
-    )
-    invalid = client.get(
-        "/api/v1/deals/",
-        headers={"X-Tenant-ID": "bad-uuid", "X-User-ID": user_id},
-    )
     missing = client.get("/api/v1/deals/")
+    main.app.dependency_overrides[require_auth] = _auth_override()
+    ok = client.get("/api/v1/deals/", headers={"Authorization": "Bearer test-token"})
 
+    assert missing.status_code == 401
     assert ok.status_code == 200
-    assert invalid.status_code == 400
-    assert invalid.json()["detail"] == "Invalid X-Tenant-ID header. Must be a UUID."
-    assert missing.status_code == 422

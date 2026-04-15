@@ -11,11 +11,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_request_id, get_tenant_id, get_user_id
+from app.api.deps import AuthContext, get_request_id, require_auth
 from app.database import get_db
-from app.models.deal import AuditLog, Deal, DealDecision, DealScore, ExtractedField
+from app.input_validation import validate_file, validate_pdf, ValidationFailure
+from app.models.deal import DealAuditLog, Deal, DealDecision, DealScore, ExtractedField
 from app.models.enums import (
-    AuditAction,
     ConfidenceLevel,
     DealStatus,
     DecisionType,
@@ -32,19 +32,29 @@ from app.services.ingestion_service import IngestionError, ingest_deal
 router = APIRouter()
 
 
-@router.post("/upload", response_model=DealUploadResponse)
+@router.post("/upload", response_model=DealUploadResponse, status_code=202)
 async def upload_deal(
     file: UploadFile = File(...),
+    auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
     request_id: str = Depends(get_request_id),
 ):
-    """Upload a deal document (PDF) for screening.
-
-    Runs the full pipeline: ingest → extract → score.
-    Returns the deal_id, status, and a summary message.
-    """
+    tenant_id = uuid.UUID(auth.tenant_id)
     content = await file.read()
+
+    file_check = validate_file(content, file.content_type)
+    if isinstance(file_check, ValidationFailure):
+        raise HTTPException(
+            status_code=file_check.http_status,
+            detail=file_check.user_message,
+        )
+
+    pdf_check = validate_pdf(file_check)
+    if isinstance(pdf_check, ValidationFailure):
+        raise HTTPException(
+            status_code=pdf_check.http_status,
+            detail=pdf_check.user_message,
+        )
 
     try:
         result = await ingest_deal(
@@ -68,19 +78,15 @@ async def upload_deal(
 
 @router.get("/", response_model=list[DealCardSchema])
 async def list_deals(
+    auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
     status: DealStatus | None = Query(None, description="Filter by deal status"),
     sort_by: str = Query("created_at", description="Sort field: created_at or score"),
     sort_order: str = Query("desc", description="Sort order: asc or desc"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """List deals for the tenant with optional filtering and sorting.
-
-    Returns deal cards with extraction summary and latest score.
-    Spec invariant: Dashboard surfaces the ranked deal queue.
-    """
+    tenant_id = uuid.UUID(auth.tenant_id)
     stmt = select(Deal).where(Deal.tenant_id == tenant_id)
 
     if status is not None:
@@ -123,10 +129,10 @@ async def list_deals(
 @router.get("/{deal_id}", response_model=DealCardSchema)
 async def get_deal(
     deal_id: uuid.UUID,
+    auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
 ):
-    """Get full detail for a single deal."""
+    tenant_id = uuid.UUID(auth.tenant_id)
     deal = await _get_deal_or_404(db, deal_id, tenant_id)
     return await _build_deal_card(db, deal)
 
@@ -135,18 +141,12 @@ async def get_deal(
 async def decide_deal(
     deal_id: uuid.UUID,
     body: DealDecisionRequest,
+    auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
-    user_id: uuid.UUID = Depends(get_user_id),
     request_id: str = Depends(get_request_id),
 ):
-    """Record a pass/pursue decision on a scored deal.
-
-    Spec invariants:
-    - Deal must be in SCORED status (score must be visible before deciding).
-    - Decisions are append-only (never edited, only superseded).
-    - DECIDED → SCORED must never happen.
-    """
+    tenant_id = uuid.UUID(auth.tenant_id)
+    user_id = auth.user_id
     deal = await _get_deal_or_404(db, deal_id, tenant_id)
 
     if deal.status != DealStatus.SCORED:
@@ -173,14 +173,16 @@ async def decide_deal(
     deal.status = DealStatus.DECIDED
 
     # Audit log
-    audit = AuditLog(
+    audit = DealAuditLog(
+        audit_id=str(uuid.uuid4()),
         deal_id=deal.id,
-        tenant_id=tenant_id,
-        user_id=user_id,
-        action=AuditAction.DECISION_MADE,
-        from_status=old_status,
-        to_status=DealStatus.DECIDED,
-        detail=f"Decision: {body.decision.value}. Notes: {body.notes or 'None'}",
+        tenant_id=str(tenant_id),
+        actor_type="user",
+        actor_id=user_id,
+        action="DECISION_MADE",
+        before_state=old_status.value,
+        after_state=DealStatus.DECIDED.value,
+        metadata_={"decision": body.decision.value, "notes": body.notes},
     )
     db.add(audit)
     await db.flush()

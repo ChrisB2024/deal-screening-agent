@@ -20,9 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.criteria import CriteriaConfig, Criterion
-from app.models.deal import AuditLog, Deal, DealScore, ExtractedField
+from app.models.deal import DealAuditLog, Deal, DealScore, ExtractedField
 from app.models.enums import (
-    AuditAction,
     ConfidenceLevel,
     CriterionType,
     DealStatus,
@@ -124,15 +123,18 @@ async def score_deal(
     db.add(deal_score)
 
     # 10. Transition deal status
+    import uuid as _uuid
     old_status = deal.status
     deal.status = DealStatus.SCORED
-    audit = AuditLog(
+    audit = DealAuditLog(
+        audit_id=str(_uuid.uuid4()),
         deal_id=deal.id,
-        tenant_id=deal.tenant_id,
-        action=AuditAction.SCORING_COMPLETED,
-        from_status=old_status,
-        to_status=DealStatus.SCORED,
-        detail=f"Score: {score}/100, Confidence: {confidence.value}",
+        tenant_id=str(deal.tenant_id),
+        actor_type="worker",
+        action="SCORING_COMPLETED",
+        before_state=old_status.value,
+        after_state=DealStatus.SCORED.value,
+        metadata_={"score": score, "confidence": confidence.value},
     )
     db.add(audit)
     await db.flush()

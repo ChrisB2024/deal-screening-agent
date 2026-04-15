@@ -72,35 +72,47 @@ class _RouteDB:
 
 def _client_and_modules():
     main, deals, criteria, database = _import_api_modules()
+    from app.auth.middleware import AuthContext, require_auth
     db = _RouteDB()
+    auth_ctx = AuthContext(
+        user_id=f"usr_{uuid.uuid4().hex}",
+        tenant_id=str(uuid.uuid4()),
+        session_id=f"sess_{uuid.uuid4().hex}",
+        roles=[],
+    )
 
     async def _override_db():
         yield db
 
+    async def _override_auth():
+        return auth_ctx
+
     main.app.dependency_overrides[database.get_db] = _override_db
+    main.app.dependency_overrides[require_auth] = _override_auth
     client = TestClient(main.app)
-    return client, db, deals, criteria
+    return client, db, deals, criteria, auth_ctx
 
 
 def _headers():
-    return {"X-Tenant-ID": str(uuid.uuid4()), "X-User-ID": str(uuid.uuid4())}
+    return {"Authorization": "Bearer test-token"}
 
 
 def test_upload_route_returns_upload_response_and_maps_ingestion_error(monkeypatch):
-    client, db, deals, criteria = _client_and_modules()
+    client, db, deals, criteria, auth = _client_and_modules()
     headers = _headers()
 
     async def _ok_ingest(**kwargs):
         return IngestionResult(
             deal_id=uuid.uuid4(),
-            status=DealStatus.SCORED,
-            message="Done",
+            status=DealStatus.UPLOADED,
+            message="Deal uploaded. Extraction and scoring queued for processing.",
             is_duplicate=False,
         )
 
     async def _bad_ingest(**kwargs):
         raise IngestionError("bad file")
 
+    monkeypatch.setattr(deals, "validate_pdf", lambda f: f)
     monkeypatch.setattr(deals, "ingest_deal", _ok_ingest)
     ok = client.post(
         "/api/v1/deals/upload",
@@ -115,15 +127,15 @@ def test_upload_route_returns_upload_response_and_maps_ingestion_error(monkeypat
         files={"file": ("deal.pdf", b"%PDF-1.4", "application/pdf")},
     )
 
-    assert ok.status_code == 200
-    assert ok.json()["status"] == "SCORED"
+    assert ok.status_code == 202
+    assert ok.json()["status"] == "UPLOADED"
     assert "deal_id" in ok.json()
     assert bad.status_code == 400
     assert bad.json()["detail"] == "bad file"
 
 
 def test_list_and_get_deal_routes_return_cards_and_404_for_wrong_tenant(monkeypatch):
-    client, db, deals, criteria = _client_and_modules()
+    client, db, deals, criteria, auth = _client_and_modules()
     headers = _headers()
     deal = SimpleNamespace(
         id=uuid.uuid4(),
@@ -173,7 +185,7 @@ def test_list_and_get_deal_routes_return_cards_and_404_for_wrong_tenant(monkeypa
 
 
 def test_decide_route_requires_scored_status_and_creates_decision_and_audit(monkeypatch):
-    client, db, deals, criteria = _client_and_modules()
+    client, db, deals, criteria, auth = _client_and_modules()
     headers = _headers()
     scored_deal = SimpleNamespace(id=uuid.uuid4(), tenant_id=uuid.uuid4(), status=DealStatus.SCORED)
     pending_deal = SimpleNamespace(id=uuid.uuid4(), tenant_id=uuid.uuid4(), status=DealStatus.EXTRACTED)
@@ -204,14 +216,14 @@ def test_decide_route_requires_scored_status_and_creates_decision_and_audit(monk
     assert ok.status_code == 200
     assert ok.json()["status"] == "DECIDED"
     assert scored_deal.status is DealStatus.DECIDED
-    assert [obj.action.value for obj in db.added if hasattr(obj, "action")] == ["DECISION_MADE"]
+    assert [obj.action for obj in db.added if hasattr(obj, "action")] == ["DECISION_MADE"]
     assert bad.status_code == 400
 
 
 def test_criteria_routes_create_get_and_list_history(monkeypatch):
-    client, db, deals, criteria = _client_and_modules()
+    client, db, deals, criteria, auth = _client_and_modules()
     headers = _headers()
-    tenant_id = headers["X-Tenant-ID"]
+    tenant_id = auth.tenant_id
     created_config = None
 
     async def _latest_version(db_arg, tenant_arg):
@@ -298,7 +310,7 @@ def test_criteria_routes_create_get_and_list_history(monkeypatch):
 
 
 def test_active_config_returns_404_when_none_and_tenant_isolation_holds(monkeypatch):
-    client, db, deals, criteria = _client_and_modules()
+    client, db, deals, criteria, auth = _client_and_modules()
     headers = _headers()
 
     async def _none_execute(stmt):

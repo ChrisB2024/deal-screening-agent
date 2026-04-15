@@ -15,7 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_request_id, get_tenant_id
+from app.api.deps import AuthContext, get_request_id, require_auth
 from app.database import get_db
 from app.models.criteria import CriteriaConfig, Criterion
 from app.models.deal import Deal
@@ -33,17 +33,11 @@ router = APIRouter()
 @router.post("/config", response_model=CriteriaConfigResponseSchema, status_code=201)
 async def create_criteria_config(
     body: CriteriaConfigCreateSchema,
+    auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
     request_id: str = Depends(get_request_id),
 ):
-    """Create a new criteria config, deactivating the previous one.
-
-    Immutable versioning: each new config increments the version number.
-    The old config is deactivated but preserved for audit trail.
-    Triggers re-scoring of all EXTRACTED deals.
-    """
-    # Get current version number
+    tenant_id = uuid.UUID(auth.tenant_id)
     latest_version = await _get_latest_version(db, tenant_id)
     new_version = latest_version + 1
 
@@ -96,10 +90,10 @@ async def create_criteria_config(
 
 @router.get("/config", response_model=CriteriaConfigResponseSchema | None)
 async def get_active_config(
+    auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
 ):
-    """Get the currently active criteria config for the tenant."""
+    tenant_id = uuid.UUID(auth.tenant_id)
     stmt = (
         select(CriteriaConfig)
         .options(selectinload(CriteriaConfig.criteria))
@@ -121,10 +115,10 @@ async def get_active_config(
 
 @router.get("/config/history", response_model=list[CriteriaConfigResponseSchema])
 async def get_config_history(
+    auth: AuthContext = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
 ):
-    """Get all criteria config versions for audit trail."""
+    tenant_id = uuid.UUID(auth.tenant_id)
     stmt = (
         select(CriteriaConfig)
         .options(selectinload(CriteriaConfig.criteria))

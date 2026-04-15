@@ -13,9 +13,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.deal import AuditLog, Deal, ExtractedField
+from app.models.deal import DealAuditLog, Deal, ExtractedField
 from app.models.enums import (
-    AuditAction,
     ConfidenceLevel,
     DealStatus,
     FieldExtractionStatus,
@@ -68,7 +67,7 @@ async def extract_deal(
     deal = await _load_and_verify_deal(db, deal_id, tenant_id)
 
     # 2. Log extraction start
-    await _log_audit(db, deal, AuditAction.EXTRACTION_STARTED, deal.status, deal.status)
+    await _log_audit(db, deal, "EXTRACTION_STARTED", deal.status, deal.status)
 
     try:
         # 3. Extract text from PDF
@@ -152,7 +151,7 @@ async def _process_extraction_result(
         old_status = deal.status
         deal.status = DealStatus.EXTRACTED
         await _log_audit(
-            db, deal, AuditAction.EXTRACTION_COMPLETED, old_status, DealStatus.EXTRACTED
+            db, deal, "EXTRACTION_COMPLETED", old_status, DealStatus.EXTRACTED
         )
         await db.flush()
 
@@ -218,7 +217,7 @@ async def _mark_deal_failed(
     deal.retry_count += 1
 
     await _log_audit(
-        db, deal, AuditAction.EXTRACTION_FAILED, old_status, DealStatus.FAILED, error_detail
+        db, deal, "EXTRACTION_FAILED", old_status, DealStatus.FAILED, error_detail
     )
     await db.flush()
 
@@ -232,18 +231,21 @@ async def _mark_deal_failed(
 async def _log_audit(
     db: AsyncSession,
     deal: Deal,
-    action: AuditAction,
+    action: str,
     from_status: DealStatus | None,
     to_status: DealStatus | None,
     detail: str | None = None,
 ) -> None:
     """Create an audit log entry. Spec invariant: no state transition without audit."""
-    audit = AuditLog(
+    import uuid as _uuid
+    audit = DealAuditLog(
+        audit_id=str(_uuid.uuid4()),
         deal_id=deal.id,
-        tenant_id=deal.tenant_id,
+        tenant_id=str(deal.tenant_id),
+        actor_type="worker",
         action=action,
-        from_status=from_status,
-        to_status=to_status,
-        detail=detail,
+        before_state=from_status.value if from_status else None,
+        after_state=to_status.value if to_status else None,
+        metadata_={"detail": detail} if detail else {},
     )
     db.add(audit)

@@ -6,11 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models.enums import AuditAction, ConfidenceLevel, DealStatus
+from app.models.enums import DealStatus
 from app.services import ingestion_service
-from app.services.extraction_service import ExtractionResult
 from app.services.ingestion_service import IngestionError, ingest_deal
-from app.services.scoring_service import ScoringResult
 
 
 class _FakeResult:
@@ -123,35 +121,20 @@ def test_ingest_deal_rejects_large_and_empty_files():
         )
 
 
-def test_ingest_deal_runs_full_pipeline_and_returns_scored_result(
+def test_ingest_deal_enqueues_extraction_job_and_returns_uploaded(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     monkeypatch.setattr(ingestion_service.settings, "upload_dir", str(tmp_path))
     tenant_id = uuid.uuid4()
     db = _FakeDB()
+    enqueued_calls = []
 
-    async def _fake_extract(db_arg, deal_id, tenant_arg):
-        assert tenant_arg == tenant_id
-        return ExtractionResult(
-            success=True,
-            deal_id=deal_id,
-            fields_found=4,
-            overall_confidence=ConfidenceLevel.MEDIUM,
-        )
+    async def _fake_enqueue(db_arg, *, job_type, payload, **kwargs):
+        enqueued_calls.append({"job_type": job_type, "payload": payload, **kwargs})
+        return "fake-job-id"
 
-    async def _fake_score(db_arg, deal_id, tenant_arg):
-        created_deal = next(obj for obj in db.added if obj.__class__.__name__ == "Deal")
-        created_deal.status = DealStatus.SCORED
-        return ScoringResult(
-            success=True,
-            deal_id=deal_id,
-            score=82,
-            confidence=ConfidenceLevel.MEDIUM,
-            rationale="Good fit",
-        )
-
-    monkeypatch.setattr(ingestion_service, "extract_deal", _fake_extract)
-    monkeypatch.setattr(ingestion_service, "score_deal", _fake_score)
+    import app.background_jobs as bg_jobs
+    monkeypatch.setattr(bg_jobs, "enqueue", _fake_enqueue)
 
     result = asyncio.run(
         ingest_deal(
@@ -165,86 +148,18 @@ def test_ingest_deal_runs_full_pipeline_and_returns_scored_result(
     )
 
     created_deal = next(obj for obj in db.added if obj.__class__.__name__ == "Deal")
-    audit = next(obj for obj in db.added if getattr(obj, "action", None) == AuditAction.DEAL_UPLOADED)
+    audit = next(obj for obj in db.added if getattr(obj, "action", None) == "DEAL_UPLOADED")
 
     assert result.is_duplicate is False
-    assert result.status is DealStatus.SCORED
-    assert "scored 82/100" in result.message
+    assert result.status is DealStatus.UPLOADED
+    assert "queued" in result.message.lower()
     assert created_deal.filename == "../broker/deal.pdf"
     assert Path(created_deal.file_path).name == "deal.pdf"
-    assert audit.to_status is DealStatus.UPLOADED
+    assert audit.after_state == DealStatus.UPLOADED.value
+    assert audit.actor_type == "system"
     assert db.flushed == 1
-    assert db.refreshed == [created_deal]
 
-
-def test_ingest_deal_returns_failed_message_when_extraction_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
-    monkeypatch.setattr(ingestion_service.settings, "upload_dir", str(tmp_path))
-    tenant_id = uuid.uuid4()
-    db = _FakeDB()
-
-    async def _fake_extract(db_arg, deal_id, tenant_arg):
-        created_deal = next(obj for obj in db.added if obj.__class__.__name__ == "Deal")
-        created_deal.status = DealStatus.FAILED
-        return ExtractionResult(
-            success=False,
-            deal_id=deal_id,
-            error="LLM timeout",
-        )
-
-    monkeypatch.setattr(ingestion_service, "extract_deal", _fake_extract)
-
-    result = asyncio.run(
-        ingest_deal(
-            db=db,
-            tenant_id=tenant_id,
-            filename="deal.pdf",
-            file_content=b"%PDF-1.4 deal content",
-            content_type="application/pdf",
-        )
-    )
-
-    assert result.status is DealStatus.FAILED
-    assert "extraction failed: LLM timeout" in result.message
-
-
-def test_ingest_deal_returns_extracted_message_when_scoring_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
-    monkeypatch.setattr(ingestion_service.settings, "upload_dir", str(tmp_path))
-    tenant_id = uuid.uuid4()
-    db = _FakeDB()
-
-    async def _fake_extract(db_arg, deal_id, tenant_arg):
-        created_deal = next(obj for obj in db.added if obj.__class__.__name__ == "Deal")
-        created_deal.status = DealStatus.EXTRACTED
-        return ExtractionResult(
-            success=True,
-            deal_id=deal_id,
-            fields_found=3,
-            overall_confidence=ConfidenceLevel.LOW,
-        )
-
-    async def _fake_score(db_arg, deal_id, tenant_arg):
-        return ScoringResult(
-            success=False,
-            deal_id=deal_id,
-            error="No active criteria config found for tenant. Configure screening criteria first.",
-        )
-
-    monkeypatch.setattr(ingestion_service, "extract_deal", _fake_extract)
-    monkeypatch.setattr(ingestion_service, "score_deal", _fake_score)
-
-    result = asyncio.run(
-        ingest_deal(
-            db=db,
-            tenant_id=tenant_id,
-            filename="deal.pdf",
-            file_content=b"%PDF-1.4 deal content",
-            content_type="application/pdf",
-        )
-    )
-
-    assert result.status is DealStatus.EXTRACTED
-    assert "Deal extracted but scoring failed" in result.message
+    assert len(enqueued_calls) == 1
+    assert enqueued_calls[0]["job_type"] == "extraction"
+    assert enqueued_calls[0]["payload"]["deal_id"] == str(created_deal.id)
+    assert enqueued_calls[0]["payload"]["tenant_id"] == str(tenant_id)
