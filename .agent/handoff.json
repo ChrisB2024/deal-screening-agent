@@ -1,21 +1,51 @@
 {
-  "last_updated_by": "codex",
-  "last_updated_at": "2026-03-23T18:04:50Z",
-  "current_phase": "implementation",
-  "session_number": "6a",
-  "status": "READY_FOR_BUILD",
+    "last_updated_by": "codex",
+    "last_updated_at": "2026-04-14T19:55:00Z",
+  "current_phase": "production_hardening",
+  "session_number": "11",
+    "status": "READY_FOR_BUILD",
   "spec_version": "1.0",
   "modules": {
+    "secrets_config": {
+      "status": "implemented",
+      "tests": "pending_validation",
+      "files": [
+        "src/app/secrets_config/__init__.py",
+        "src/app/secrets_config/types.py",
+        "src/app/secrets_config/redaction.py",
+        "src/app/secrets_config/providers.py",
+        "src/app/secrets_config/client.py",
+        "src/app/secrets_config/kms.py",
+        "src/app/secrets_config/bootstrap.py"
+      ],
+      "blockers": [],
+      "notes": "EnvFile + Memory providers implemented. AWS/Fly.io providers are TODO stubs. KMS LocalAES encrypt/decrypt are TODO. SecretValue field order fixed (C-007). Getter name-shadowing bug fixed in Session 8 (from . import bootstrap returned function, not module)."
+    },
+    "observability": {
+      "status": "implemented",
+      "tests": "pending_validation",
+      "files": [
+        "src/app/observability/__init__.py",
+        "src/app/observability/logger.py",
+        "src/app/observability/scrubber.py",
+        "src/app/observability/audit.py",
+        "src/app/observability/middleware.py",
+        "src/app/observability/health.py"
+      ],
+      "blockers": [],
+      "notes": "Structured JSON logger, PII scrubber, audit helper, health+metrics endpoints, ObservabilityMiddleware. /metrics stub added (C-008). duration_ms promoted to top-level in logger (C-009)."
+    },
     "db_models": {
       "status": "implemented",
-      "tests": "passed",
+      "tests": "pending_validation",
       "files": [
         "src/app/models/enums.py",
         "src/app/models/base.py",
         "src/app/models/deal.py",
         "src/app/models/criteria.py"
       ],
-      "blockers": []
+      "blockers": [],
+      "notes": "Added ARCHIVED status, VALID_STATE_TRANSITIONS with validate_transition(). Replaced AuditLog with DealAuditLog (new schema). All consumers updated. Legacy AuditAction enum removed (C-010)."
     },
     "schemas": {
       "status": "implemented",
@@ -27,16 +57,17 @@
       "blockers": []
     },
     "config": {
-      "status": "implemented",
+      "status": "deprecated",
       "tests": "passed",
       "files": [
         "src/app/config.py"
       ],
-      "blockers": []
+      "blockers": [],
+      "notes": "Legacy config.py still in use by some consumers (ingestion_service, database.py). Being replaced by secrets_config module. Will be removed once all consumers are migrated."
     },
     "extraction_service": {
       "status": "implemented",
-      "tests": "passed",
+      "tests": "updated",
       "files": [
         "src/app/services/pdf_parser.py",
         "src/app/services/pii_scrubber.py",
@@ -44,25 +75,28 @@
         "src/app/services/llm_client.py",
         "src/app/services/extraction_service.py"
       ],
-      "blockers": []
+      "blockers": [],
+      "notes": "Updated to use DealAuditLog with string action names."
     },
     "scoring_engine": {
       "status": "implemented",
-      "tests": "passed",
+      "tests": "updated",
       "files": [
         "src/app/services/criteria_evaluator.py",
         "src/app/services/scoring_service.py"
       ],
-      "blockers": []
+      "blockers": [],
+      "notes": "Updated to use DealAuditLog with structured metadata."
     },
     "ingestion_service": {
       "status": "implemented",
-      "tests": "passed",
+      "tests": "updated",
       "files": [
         "src/app/database.py",
         "src/app/services/ingestion_service.py"
       ],
-      "blockers": []
+      "blockers": [],
+      "notes": "Updated to use DealAuditLog. Still uses legacy config.py for settings."
     },
     "dashboard_api": {
       "status": "implemented",
@@ -73,7 +107,8 @@
         "src/app/api/deals.py",
         "src/app/api/criteria.py"
       ],
-      "blockers": []
+      "blockers": [],
+      "notes": "main.py updated with ObservabilityMiddleware, bootstrap in lifespan, health routes. deals.py updated to DealAuditLog. Revalidated in Session 8a with validator-owned JWT-auth tests."
     },
     "minimal_ui": {
       "status": "implemented",
@@ -98,11 +133,73 @@
       "files": [
         "alembic.ini",
         "alembic/env.py",
-        "alembic/versions/1ed7e8f2e432_initial_schema.py"
+        "alembic/versions/1ed7e8f2e432_initial_schema.py",
+        "alembic/versions/a3f1b9c45d01_audit_log_redesign_and_archived_status.py"
       ],
       "blockers": []
-    }
-  },
+    },
+    "auth_service": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/models/user.py",
+        "src/app/auth/__init__.py",
+        "src/app/auth/passwords.py",
+        "src/app/auth/tokens.py",
+        "src/app/auth/service.py",
+        "src/app/auth/schemas.py",
+        "src/app/auth/middleware.py",
+        "src/app/auth/routes.py"
+      ],
+      "blockers": [],
+      "notes": "Revalidated in Session 8a. Logout now requires auth, AuthContext includes roles, and validator-owned auth tests pass."
+    },
+    "rate_limiter": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/rate_limiter/__init__.py",
+        "src/app/rate_limiter/bucket.py",
+        "src/app/rate_limiter/store.py",
+        "src/app/rate_limiter/config.py",
+        "src/app/rate_limiter/ip_parser.py",
+        "src/app/rate_limiter/middleware.py"
+      ],
+      "blockers": [],
+      "notes": "Revalidated in Session 9a. Middleware now derives verified auth identity from bearer tokens for USER/TENANT rate-limit keys, and health route prefixes are exempted correctly. Validator-owned rate limiter tests and the full suite pass."
+    },
+    "input_validation": {
+      "status": "implemented",
+      "tests": "passed",
+      "files": [
+        "src/app/input_validation/__init__.py",
+        "src/app/input_validation/types.py",
+        "src/app/input_validation/file_validator.py",
+        "src/app/input_validation/pdf_validator.py",
+        "src/app/input_validation/middleware.py"
+      ],
+      "blockers": [],
+      "notes": "Revalidated in Session 10a. Validator-owned tests confirm the closed reason-code contract, file validator, PDF validator, body-size middleware behavior, upload-route rejection before ingestion, and protected-route auth ordering. The middleware now checks for Bearer auth on configured protected prefixes before body-size enforcement."
+    },
+        "background_jobs": {
+            "status": "implemented",
+            "tests": "passed",
+            "files": [
+                "src/app/background_jobs/__init__.py",
+                "src/app/background_jobs/types.py",
+        "src/app/background_jobs/models.py",
+        "src/app/background_jobs/backoff.py",
+        "src/app/background_jobs/registry.py",
+        "src/app/background_jobs/queue.py",
+        "src/app/background_jobs/worker.py",
+        "src/app/background_jobs/handlers.py",
+                "src/app/background_jobs/__main__.py",
+                "src/app/background_jobs/admin.py"
+            ],
+            "blockers": [],
+            "notes": "Revalidated in Session 11a. Validator-owned background-jobs suite passes (31 passed), including dead-letter persistence and worker CLI contract checks. Full suite also passes under controlled plugin loading: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=src python3 -m pytest -x -vv -p pytest_asyncio.plugin`."
+        }
+    },
   "open_blockers": [
     {
       "id": "C-001",
@@ -135,25 +232,135 @@
       "validated_in_session": "5a"
     },
     {
-      "id": "C-004",
+      "id": "C-006",
       "source": "claude",
-      "session": 6,
-      "description": "Session 5a handoff incorrectly marked MVP as feature-complete, missing Build Order item 6 (Minimal UI). Corrected in Session 6.",
-      "severity": "low",
+      "session": 7,
+      "description": "Alembic migration needed: audit_logs → deal_audit_log table rename, new columns, ARCHIVED status.",
+      "severity": "medium",
       "resolved": true,
-      "resolved_in_session": 6,
+      "resolved_in_session": "10b",
       "validated_in_session": null
     },
     {
-      "id": "C-005",
+      "id": "C-007",
       "source": "codex",
-      "session": 6,
-      "description": "Frontend lint fails in frontend/src/pages/DealList.tsx because of synchronous setState inside useEffect.",
+      "session": 7,
+      "description": "The new secrets_config module cannot be imported because SecretValue declares a non-default dataclass field after a defaulted field, blocking bootstrap and all module consumers.",
+      "severity": "high",
+      "resolved": true,
+      "resolved_in_session": "7a",
+      "validated_in_session": "7a"
+    },
+    {
+      "id": "C-008",
+      "source": "codex",
+      "session": 7,
+      "description": "Observability module does not expose the required /metrics endpoint from the module spec.",
       "severity": "medium",
       "resolved": true,
-      "resolved_in_session": "6a",
-      "validated_in_session": "6a"
-    }
-  ],
-  "next_action": "Human or Claude: MVP is feature-complete and fully revalidated. Next priority is JWT auth, rate limiting, and production hardening."
+      "resolved_in_session": "7a",
+      "validated_in_session": "7a"
+    },
+    {
+      "id": "C-009",
+      "source": "codex",
+      "session": 7,
+      "description": "Structured logger leaves canonical top-level duration_ms unset, violating the observability log schema.",
+      "severity": "medium",
+      "resolved": true,
+      "resolved_in_session": "7a",
+      "validated_in_session": "7a"
+    },
+    {
+      "id": "C-010",
+      "source": "codex",
+      "session": 7,
+      "description": "Legacy AuditAction enum still exists after the string-action audit migration, leaving duplicate audit-action contract surface in the model layer.",
+      "severity": "low",
+      "resolved": true,
+      "resolved_in_session": "7a",
+      "validated_in_session": "7a"
+    },
+    {
+      "id": "C-011",
+      "source": "codex",
+      "session": 8,
+      "description": "POST /api/v1/auth/logout is not protected by require_auth and still succeeds without an Authorization header, violating the auth module contract.",
+      "severity": "medium",
+      "resolved": true,
+      "resolved_in_session": "8a",
+      "validated_in_session": "8a"
+    },
+    {
+      "id": "C-012",
+      "source": "codex",
+      "session": 8,
+      "description": "Protected business routes still accept X-Tenant-ID/X-User-ID headers instead of requiring JWT auth, so the system still allows unauthenticated access contrary to the main spec.",
+      "severity": "high",
+      "resolved": true,
+      "resolved_in_session": "8a",
+      "validated_in_session": "8a"
+    },
+    {
+      "id": "C-013",
+      "source": "codex",
+      "session": 8,
+      "description": "AuthContext omits the spec-required roles field, leaving the auth middleware contract incomplete.",
+      "severity": "low",
+      "resolved": true,
+      "resolved_in_session": "8a",
+      "validated_in_session": "8a"
+    },
+    {
+      "id": "C-014",
+      "source": "codex",
+      "session": 9,
+      "description": "RateLimitMiddleware cannot enforce USER/TENANT scoped limits on authenticated routes because it reads request.state.auth_context before the current auth dependency path populates any verified auth context.",
+      "severity": "high",
+      "resolved": true,
+      "resolved_in_session": "9a",
+      "validated_in_session": "9a"
+    },
+    {
+      "id": "C-015",
+      "source": "codex",
+      "session": 9,
+      "description": "Health endpoints are still rate-limited because the middleware exemption list does not match the real /health/liveness and /health/readiness paths, causing a regression on the existing health route behavior.",
+      "severity": "medium",
+      "resolved": true,
+      "resolved_in_session": "9a",
+      "validated_in_session": "9a"
+    },
+        {
+            "id": "C-016",
+            "source": "codex",
+            "session": 10,
+            "description": "Protected routes are still processed by InputValidationMiddleware before auth runs, so unauthenticated oversized uploads return 413 rather than failing auth first as required by the input-validation module contract.",
+            "severity": "medium",
+            "resolved": true,
+            "resolved_in_session": "10a",
+            "validated_in_session": "10a"
+        },
+        {
+            "id": "C-017",
+            "source": "codex",
+            "session": 11,
+            "description": "Background job dead-lettering crashes because queue.mark_failed() calls StructuredLogger.critical(), but StructuredLogger does not implement a critical() method.",
+            "severity": "high",
+            "resolved": true,
+            "resolved_in_session": "11a",
+            "validated_in_session": "11a"
+        },
+        {
+            "id": "C-018",
+            "source": "codex",
+            "session": 11,
+            "description": "The Background Jobs module spec documents `python -m background_jobs.worker --concurrency 4`, but no importable `background_jobs.worker` module exists; the implementation only provides `python -m app.background_jobs`.",
+            "severity": "medium",
+            "resolved": true,
+            "resolved_in_session": "11a",
+            "validated_in_session": "11a"
+        }
+    ],
+    "next_action": "Claude: Background Jobs is validated. Continue with the next build step. For full-suite validation in this environment, use `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` and explicitly load `pytest_asyncio.plugin`."
 }

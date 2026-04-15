@@ -418,3 +418,427 @@ Project initialized with DADP protocol. Awaiting first validation session.
 - **Status:** READY_FOR_BUILD
 - **Claude should:** MVP is now revalidated cleanly across backend and frontend. Next work should be auth, rate limiting, and production hardening.
 - **Blockers:** None
+
+---
+
+## Session 7 — 2026-04-12 — VALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 7), `.spec/00_main_spec.md`, `.spec/01_decomposition.md`, `.spec/modules/secrets_config.md`, `.spec/modules/observability.md`, `src/app/secrets_config/*`, `src/app/observability/*`, `src/app/models/enums.py`, `src/app/models/deal.py`, `src/app/main.py`
+- **Validating:** Production-hardening phase modules: `secrets_config`, `observability`, and DB-model alignment changes
+- **Claude session referenced:** Session 7
+
+### Test Results
+
+#### Correctness
+- [PASSED] `test_request_id_middleware_adds_header`: Updated API validation for Session 7 health routes. `GET /health/liveness` returns 200 and still carries `X-Request-ID`.
+- [PASSED] `test_cors_allows_localhost_frontend_origin`: Updated Session 6 compatibility check to use `GET /health/liveness`; CORS still allows `http://localhost:5173`.
+- [PASSED] `test_decide_route_requires_scored_status_and_creates_decision_and_audit`: Deal decision flow still works with `DealAuditLog` and string audit actions.
+- [PASSED] `test_ingest_deal_runs_full_pipeline_and_returns_scored_result`: Ingestion flow still writes `DealAuditLog` with `after_state="UPLOADED"` and `actor_type="system"`.
+- [FAILED] `test_secrets_config_imports_and_supports_memory_bootstrap`: The new `secrets_config` module cannot be imported, so bootstrap cannot run at all.
+  - **Expected:** Session 7 claimed `secrets_config` was implemented and requested validation of bootstrap with `APP_ENV=test` + `MemoryProvider`.
+  - **Actual:** Importing `app.secrets_config` raises `TypeError: non-default argument '_value' follows default argument 'loaded_at'` from `SecretValue` in `src/app/secrets_config/types.py`.
+  - **Likely cause:** `SecretValue` declares `_value` after the defaulted `loaded_at` field, which is invalid for dataclass init ordering.
+  - **Fix needed:** Reorder `SecretValue` fields so non-default `_value` comes before `loaded_at`, then re-run bootstrap/import validation. After that, verify the accessor functions in `src/app/secrets_config/__init__.py` still work correctly with the bootstrap module namespace.
+
+#### Spec Compliance
+- [FAILED] `test_main_exposes_metrics_endpoint_per_observability_spec`: The app does not expose `GET /metrics`.
+  - **Expected:** `observability.md` requires a Prometheus scrape endpoint and lists `GET /metrics` in the module contract.
+  - **Actual:** `GET /metrics` returns 404 from `src/app/main.py`.
+  - **Likely cause:** Session 7 shipped health routes and logging middleware, but no metrics registry/router was wired into the FastAPI app.
+  - **Fix needed:** Implement the metrics surface promised by the Observability module spec or explicitly reduce the module status to partial/incomplete until it exists.
+- [FAILED] `test_structured_logger_promotes_duration_ms_to_top_level`: Structured log output violates the canonical schema by leaving top-level `duration_ms` unset.
+  - **Expected:** `observability.md` says canonical fields are populated by middleware; request logs should emit `duration_ms` as a top-level field.
+  - **Actual:** `src/app/observability/logger.py` filters `duration_ms` out of caller fields but never copies it into `record._duration_ms`, so emitted JSON shows `"duration_ms": null`.
+  - **Likely cause:** The logger wrapper strips protected keys without a dedicated path for schema-owned fields.
+  - **Fix needed:** Teach the logger wrapper/formatter to accept schema-owned timing data through a controlled internal parameter and populate the canonical `duration_ms` field.
+
+#### Adversarial
+- [FAILED] `test_legacy_audit_action_enum_removed_after_string_action_migration`: Legacy audit action enum still exists after the claimed string-action migration.
+  - **Expected:** Session 7 stated the codebase had moved to `DealAuditLog` with string action names and asked to verify no remaining `AuditLog` / `AuditAction` references remained.
+  - **Actual:** `src/app/models/enums.py` still exports `AuditAction`.
+  - **Likely cause:** The runtime consumers were migrated, but the old enum was left behind during cleanup.
+  - **Fix needed:** Remove the unused legacy enum or justify and document why two audit-action representations should coexist.
+
+### Regressions
+- None in the previously validated MVP paths after updating validator expectations to the Session 7 route/audit contract.
+
+### Summary
+- **Total:** 4 passed, 4 failed, 1 known pre-existing blocker still open (`C-006`)
+- **Modules validated:** `dashboard_api`, `ingestion_service`, `db_models` (partial), `secrets_config`, `observability`
+- **Modules blocked:** `secrets_config`, `observability`
+
+### Handoff
+- **Status:** BLOCKED
+- **Claude should:** Fix the `SecretValue` dataclass import error first, then implement or explicitly defer the `/metrics` endpoint, repair structured logging so `duration_ms` is populated in the canonical schema, remove the leftover `AuditAction` enum, and finally address the already-open Alembic blocker `C-006`.
+- **Blockers:** `C-006`, `C-007`, `C-008`, `C-009`, `C-010`
+
+---
+
+## Session 7a — 2026-04-12 — VALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 7 / 7a handoff), `src/app/secrets_config/types.py`, `src/app/observability/logger.py`, `src/app/observability/health.py`, `src/app/main.py`, `src/app/models/enums.py`
+- **Validating:** Claimed fixes for `C-007`, `C-008`, `C-009`, `C-010`
+- **Claude session referenced:** Session 7a
+
+### Test Results
+
+#### Correctness
+- [PASSED] `pytest -q tests/test_session7.py`: All targeted Session 7 validator tests now pass.
+- [PASSED] `test_secrets_config_imports_and_supports_memory_bootstrap`: `app.secrets_config` now imports cleanly; `SecretValue` field order no longer blocks module load.
+- [PASSED] `test_structured_logger_promotes_duration_ms_to_top_level`: `src/app/observability/logger.py` now promotes `duration_ms` into the canonical top-level schema field.
+
+#### Spec Compliance
+- [PASSED] `test_main_exposes_metrics_endpoint_per_observability_spec`: `GET /metrics` is now exposed and returns 200 from the health/metrics router.
+- [PASSED] `legacy AuditAction cleanup`: No `AuditAction` symbol remains in `src/` or `tests/`; the runtime model layer now uses string action names only.
+
+#### Adversarial
+- [PASSED] `residual legacy audit contract scan`: Repository scan shows the only remaining `audit_logs` references are in the already-known stale Alembic migration, consistent with open blocker `C-006`.
+
+### Regressions
+- None observed in the targeted Session 7 fix set.
+
+### Summary
+- **Total:** 6 passed, 0 failed, 0 new blockers
+- **Modules validated:** `secrets_config`, `observability`, `db_models`
+- **Modules blocked:** `alembic_migrations` (`C-006` only)
+
+### Handoff
+- **Status:** READY_FOR_BUILD
+- **Claude should:** Leave `C-007` through `C-010` closed. The remaining production-hardening blocker is `C-006` (Alembic migration alignment for `deal_audit_log` + `ARCHIVED`).
+- **Blockers:** `C-006`
+
+---
+
+## Session 8 — 2026-04-12 — VALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 8), `workflow1/claude_session.md`, `.agent/prompts/claude_session.md`, `.spec/modules/auth_service.md`, `src/app/auth/*`, `src/app/api/deps.py`, `src/app/main.py`
+- **Validating:** Auth Service implementation using validator-authored tests instead of Claude's self-reported verification
+- **Claude session referenced:** Session 8
+
+### Test Results
+
+#### Correctness
+- [PASSED] `test_login_success_creates_session_refresh_token_and_audit`: Login creates a session, refresh token, and success audit entry and returns the configured TTLs.
+- [PASSED] `test_refresh_reuse_detection_revokes_session_and_audits`: Refresh-token reuse revokes the session and records `REUSE_DETECTED`.
+
+#### Spec Compliance
+- [FAILED] `test_logout_route_requires_authorization_header_per_spec`: Logout is not protected by auth middleware.
+  - **Expected:** `auth_service.md` requires `Authorization: Bearer` on `POST /api/v1/auth/logout`.
+  - **Actual:** Calling `/api/v1/auth/logout` without an Authorization header still executes the route handler and returns `204`.
+  - **Likely cause:** [src/app/auth/routes.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/auth/routes.py:82) has no `Depends(require_auth)` on `logout()`.
+  - **Fix needed:** Add `AuthContext = Depends(require_auth)` to logout and treat it as an authenticated endpoint.
+- [FAILED] `test_protected_deals_route_requires_auth_not_only_tenant_headers`: Business routes still accept header-only identity.
+  - **Expected:** The main spec and auth spec require protected routes to use verified JWT auth, not `X-Tenant-ID` / `X-User-ID`.
+  - **Actual:** `GET /api/v1/deals/` returns `200` with only tenant/user headers and no bearer token.
+  - **Likely cause:** [src/app/api/deps.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/api/deps.py:1) is still the MVP header-based dependency path, and dashboard routes have not been migrated to `require_auth`.
+  - **Fix needed:** Replace header-based identity extraction on protected business routes with `AuthContext` from `require_auth`.
+- [FAILED] `test_auth_context_includes_roles_per_spec`: `AuthContext` does not match the auth module contract.
+  - **Expected:** `auth_service.md` defines `AuthContext` with `user_id`, `tenant_id`, `session_id`, and `roles`.
+  - **Actual:** [src/app/auth/middleware.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/auth/middleware.py:19) defines only `user_id`, `tenant_id`, and `session_id`.
+  - **Likely cause:** The implementation stopped at the minimal identity tuple and did not carry the roles field from the spec.
+  - **Fix needed:** Add `roles: list[str]` to `AuthContext` and populate it consistently, even if v1 uses an empty/default role set.
+
+#### Adversarial
+- [PASSED] `validator-owned auth coverage`: Auth is now covered by `tests/test_auth_module.py`, not by builder-owned smoke checks.
+
+### Regressions
+- None outside the new auth module. The existing validator suite still passes except for the new auth-spec failures.
+
+### Summary
+- **Total:** 3 passed, 3 failed, 0 blockers resolved
+- **Modules validated:** `auth_service` (partial)
+- **Modules blocked:** `auth_service`, `dashboard_api`
+
+### Handoff
+- **Status:** BLOCKED
+- **Claude should:** Protect `/api/v1/auth/logout` with `require_auth`, migrate protected business routes away from `X-Tenant-ID` / `X-User-ID` and onto `AuthContext`, add `roles` to `AuthContext`, and keep `C-006` open until Alembic is aligned.
+- **Blockers:** `C-006`, `C-011`, `C-012`, `C-013`
+
+---
+
+## Session 8a — 2026-04-12 — VALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 8a), `src/app/auth/routes.py`, `src/app/auth/middleware.py`, `src/app/api/deps.py`, `src/app/api/deals.py`, `src/app/api/criteria.py`
+- **Validating:** Revalidation of `C-011`, `C-012`, and `C-013` after Claude's auth integration fixes
+- **Claude session referenced:** Session 8a
+
+### Test Results
+
+#### Correctness
+- [PASSED] `PYTHONPATH=src python3 -m pytest -q tests/test_auth_module.py tests/test_main_api.py tests/test_dashboard_api.py`: The focused auth/API validator suite passes against the updated files.
+- [PASSED] `test_logout_route_requires_authorization_header_per_spec`: `/api/v1/auth/logout` now requires auth and no longer executes without `Authorization: Bearer`.
+- [PASSED] `test_protected_deals_route_requires_auth_not_only_tenant_headers`: Protected business routes now rely on `require_auth` rather than `X-Tenant-ID` / `X-User-ID`.
+- [PASSED] `test_auth_context_includes_roles_per_spec`: `AuthContext` now includes the spec-required `roles` field.
+
+#### Spec Compliance
+- [PASSED] `validator-owned route migration coverage`: Updated validator tests now exercise the JWT-auth dependency contract rather than the retired MVP header contract.
+- [PASSED] `PYTHONPATH=src pytest -q`: Full validator suite passes end-to-end.
+
+#### Adversarial
+- [PASSED] `protected-route auth gate`: The dashboard/API layer no longer exposes deal routes to unauthenticated callers via header-only identity spoofing.
+
+### Regressions
+- None observed from the Session 8a auth integration changes.
+
+### Summary
+- **Total:** 7 passed, 0 failed, 0 blockers
+- **Modules validated:** `auth_service`, `dashboard_api`
+- **Modules blocked:** `alembic_migrations` (`C-006` only)
+
+### Handoff
+- **Status:** READY_FOR_BUILD
+- **Claude should:** Leave `C-011` through `C-013` closed. The remaining open blocker is `C-006` (Alembic migration alignment for `deal_audit_log` + `ARCHIVED`).
+- **Blockers:** `C-006`
+
+---
+
+## Session 9 — 2026-04-13 — VALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 9), `.spec/modules/rate_limiter.md`, `src/app/rate_limiter/*`, `src/app/main.py`, `src/app/auth/middleware.py`
+- **Validating:** Rate limiter implementation with validator-owned tests and full-suite regression coverage
+- **Claude session referenced:** Session 9
+
+### Test Results
+
+#### Correctness
+- [PASSED] `test_token_bucket_denies_after_burst_and_refills_over_time`: Token bucket burst/refill behavior matches the expected limiter math.
+- [PASSED] `test_client_ip_parser_ignores_spoofed_forwarded_for_from_untrusted_peer`: The trusted-proxy parser rejects spoofed `X-Forwarded-For` chains from untrusted peers.
+- [PASSED] `test_client_ip_parser_uses_first_untrusted_hop_from_right`: Client IP derivation follows the expected right-to-left proxy walk.
+- [PASSED] `test_rate_limiter_fails_open_when_store_errors`: Store failures fail open instead of blocking requests.
+- [FAILED] `test_upload_route_is_not_rate_limited_by_user_scope_in_current_middleware_integration`: Authenticated upload requests are not throttled by `USER` / `TENANT` scope.
+  - **Expected:** The second authenticated upload should return `429` when `USER` and `TENANT` upload limits are `1/minute`.
+  - **Actual:** The second upload still returns `200`.
+  - **Likely cause:** [src/app/rate_limiter/middleware.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/rate_limiter/middleware.py:1) reads `request.state.auth_context`, but the current auth integration provides `AuthContext` via dependency injection and does not populate `request.state.auth_context` before middleware runs.
+  - **Fix needed:** Either authenticate before the rate-limit middleware or make the middleware derive verified auth context from the request so `USER` and `TENANT` scopes can execute.
+
+#### Spec Compliance
+- [FAILED] `test_health_endpoints_are_not_rate_limited`: Health routes are still subject to IP rate limiting.
+  - **Expected:** Health endpoints should be excluded from rate limiting so liveness/readiness stay available under load.
+  - **Actual:** The second request to `/health/liveness` returns `429`.
+  - **Likely cause:** [src/app/rate_limiter/middleware.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/rate_limiter/middleware.py:1) exempts `/health` and `/ready`, but the actual endpoints are `/health/liveness` and `/health/readiness`.
+  - **Fix needed:** Exclude the real health route prefixes used by [src/app/main.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/main.py:1).
+
+#### Regressions
+- [FAILED] `tests/test_session6.py::test_cors_allows_localhost_frontend_origin`: The rate limiter regressed the existing health/CORS path by returning `429` from `/health/liveness` under the shared app instance.
+
+### Summary
+- **Total:** 4 passed, 2 failed in `tests/test_rate_limiter.py`; full suite `101 passed, 3 failed, 1 warning`
+- **Modules validated:** `rate_limiter` (partial)
+- **Modules blocked:** `rate_limiter`, `dashboard_api` health-path regression
+
+### Handoff
+- **Status:** BLOCKED
+- **Claude should:** Fix auth-context integration so `USER` and `TENANT` limits are enforceable in middleware, exclude the real health route prefixes from rate limiting, and return Session 9 for revalidation. Keep `C-006` open.
+- **Blockers:** `C-006`, `C-014`, `C-015`
+
+---
+
+## Session 9a — 2026-04-13 — REVALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md`, `src/app/rate_limiter/middleware.py`, `src/app/main.py`
+- **Validating:** Claude's fixes for `C-014` and `C-015` using the same validator-owned rate limiter tests
+- **Claude session referenced:** Session 9a
+
+### Test Results
+
+#### Correctness
+- [PASSED] `test_upload_route_is_not_rate_limited_by_user_scope_in_current_middleware_integration`: Authenticated upload requests now hit `USER` and `TENANT` scoped rate limits and return `429` on the second request under a `1/minute` config.
+- [PASSED] `test_token_bucket_denies_after_burst_and_refills_over_time`: Token bucket behavior remains correct after the middleware changes.
+- [PASSED] `test_rate_limiter_fails_open_when_store_errors`: Fail-open behavior remains intact.
+
+#### Spec Compliance
+- [PASSED] `test_health_endpoints_are_not_rate_limited`: `/health/liveness` is now exempt from rate limiting as required.
+- [PASSED] `PYTHONPATH=src python3 -m pytest -q tests/test_rate_limiter.py`: Focused rate-limiter validator suite passes.
+- [PASSED] `PYTHONPATH=src pytest -q`: Full validator suite passes end-to-end with no regressions from the rate limiter fixes.
+
+#### Regressions
+- [PASSED] `tests/test_session6.py::test_cors_allows_localhost_frontend_origin`: The earlier health-route regression is resolved.
+
+### Summary
+- **Total:** 6 passed, 0 failed in `tests/test_rate_limiter.py`; full suite `104 passed, 1 warning`
+- **Modules validated:** `rate_limiter`
+- **Modules blocked:** `alembic_migrations` (`C-006` only)
+
+### Handoff
+- **Status:** READY_FOR_BUILD
+- **Claude should:** Leave `C-014` and `C-015` closed. Continue to Build Order #6 (Input Validation). `C-006` remains deferred.
+- **Blockers:** `C-006`
+
+---
+
+## Session 10 — 2026-04-13 — VALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 10), `.spec/modules/input_validation.md`, `src/app/input_validation/*`, `src/app/api/deals.py`, `src/app/main.py`
+- **Validating:** Input Validation implementation with validator-owned tests for reason-code contract, file/PDF validation, middleware limits, and protected-route integration
+- **Claude session referenced:** Session 10
+
+### Test Results
+
+#### Correctness
+- [PASSED] `test_reason_code_enum_matches_closed_contract`: The `ReasonCode` enum matches the closed 13-code contract claimed by the module.
+- [PASSED] `test_validate_file_accepts_exact_size_limit_and_rejects_one_byte_over`: File size enforcement works at the configured boundary.
+- [PASSED] `test_validate_file_rejects_unsupported_content_type`: Unsupported MIME types are rejected with the expected typed failure.
+- [PASSED] `test_validate_file_rejects_magic_mismatch`: PDF magic-byte checking rejects non-PDF payloads declared as `application/pdf`.
+- [PASSED] `test_validate_pdf_rejects_encrypted_pdf`: Encrypted PDFs are rejected.
+- [PASSED] `test_validate_pdf_rejects_javascript_pdf`: PDFs containing JavaScript actions are rejected.
+- [PASSED] `test_validate_pdf_rejects_page_count_over_limit`: Page-count bounds are enforced.
+- [PASSED] `test_validate_pdf_rejects_malformed_pdf`: Malformed PDFs are returned as typed failures instead of raw parser exceptions.
+- [PASSED] `test_input_validation_middleware_rejects_large_declared_upload_body`: Upload body-size pre-check returns `413` with the typed error envelope.
+- [PASSED] `test_input_validation_middleware_uses_smaller_limit_for_non_upload_paths`: Non-upload paths get the tighter body limit.
+- [PASSED] `test_input_validation_middleware_exempts_health_routes`: Health endpoints are exempt from the middleware body-size pre-check.
+- [PASSED] `test_upload_route_rejects_invalid_pdf_before_ingestion`: Upload-route integration rejects invalid PDFs before ingestion runs.
+
+#### Spec Compliance
+- [FAILED] `test_protected_upload_auth_runs_before_input_validation_per_spec`: Protected routes still hit Input Validation before auth.
+  - **Expected:** The module spec says Auth Service runs first, so an unauthenticated oversized upload should fail auth before Input Validation handles the body.
+  - **Actual:** `POST /api/v1/deals/upload` without `Authorization` returns `413`, not `401`.
+  - **Likely cause:** [src/app/main.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/main.py:1) installs `InputValidationMiddleware`, but the current auth system is dependency-based, not middleware-based, so input validation executes before auth on protected routes.
+  - **Fix needed:** Move authenticated identity enforcement into middleware ahead of Input Validation, or otherwise ensure protected routes are auth-gated before input validation decisions are emitted.
+
+### Regressions
+- None beyond the new validator-owned spec failure above. Full suite failure is isolated to the protected-route auth-ordering contract.
+
+### Summary
+- **Total:** `12 passed, 1 failed` in `tests/test_input_validation.py`; full suite `116 passed, 1 failed, 1 warning`
+- **Modules validated:** `input_validation` (partial)
+- **Modules blocked:** `input_validation`, auth/input-validation middleware ordering
+
+### Handoff
+- **Status:** BLOCKED
+- **Claude should:** Fix the auth-before-input-validation ordering on protected routes, then return Session 10 for revalidation. Keep `C-006` open.
+- **Blockers:** `C-006`, `C-016`
+
+---
+
+## Session 10a — 2026-04-13 — REVALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 10a), `src/app/input_validation/middleware.py`, `src/app/main.py`
+- **Validating:** Claude's `C-016` fix using the same validator-owned input-validation coverage
+- **Claude session referenced:** Session 10a
+
+### Test Results
+
+#### Correctness
+- [PASSED] `PYTHONPATH=src python3 -m pytest -q tests/test_input_validation.py`: The focused validator suite passes against the updated middleware.
+- [PASSED] `test_protected_upload_auth_runs_before_input_validation_per_spec`: Protected upload routes now fail auth before input-validation body-size handling when `Authorization: Bearer` is missing.
+- [PASSED] `test_upload_route_rejects_invalid_pdf_before_ingestion`: Upload-route validation still rejects bad PDFs before ingestion runs.
+
+#### Spec Compliance
+- [PASSED] `validator-owned input_validation coverage`: The reason-code contract, file validator, PDF validator, middleware body-size checks, and protected-route auth-ordering contract all pass.
+- [PASSED] `PYTHONPATH=src pytest -q`: Full validator suite passes end-to-end.
+
+#### Regressions
+- None observed from the `C-016` fix.
+
+### Summary
+- **Total:** `13 passed, 0 failed` in `tests/test_input_validation.py`; full suite `117 passed, 1 warning`
+- **Modules validated:** `input_validation`
+- **Modules blocked:** `alembic_migrations` (`C-006` only)
+
+### Handoff
+- **Status:** READY_FOR_BUILD
+- **Claude should:** Leave `C-016` closed and continue to Build Order #7 (Background Jobs). `C-006` remains deferred.
+- **Blockers:** `C-006`
+
+---
+
+## Session 11 — 2026-04-14 — VALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 11), `src/app/background_jobs/*`, `src/app/observability/logger.py`, `.spec/modules/background_jobs.md`
+- **Validating:** Background Jobs module implementation and the new validator-owned coverage in `tests/test_background_jobs.py`
+- **Claude session referenced:** Session 11
+
+### Test Results
+
+#### Correctness
+- [PASSED] `test_enqueue_rejects_unregistered_job_type`: `enqueue()` rejects unknown job types with `UnknownJobType`.
+- [PASSED] `test_enqueue_rejects_schema_violation`: `enqueue()` rejects payloads that do not satisfy the registered Pydantic schema.
+- [PASSED] `test_enqueue_returns_existing_job_id_on_idempotency_conflict`: idempotent enqueue returns the existing job id instead of creating a duplicate row.
+- [PASSED] `test_claim_marks_job_claimed_and_sets_expiry`: `claim()` moves a pending job to `CLAIMED`, assigns `claimed_by`, and sets `claim_expires_at`.
+- [PASSED] `test_mark_failed_retries_with_scrubbed_error_and_backoff`: retryable failure resets the job to `PENDING`, clears claim ownership, scrubs persisted error text, and reschedules with backoff.
+- [FAILED] `test_mark_failed_dead_letters_non_retryable_errors`: dead-lettering crashes before the job can be persisted.
+  - **Expected:** A non-retryable failure should move the job to `DEAD_LETTERED`, stamp `dead_lettered_at`, and emit the critical alert required by the module spec.
+  - **Actual:** `mark_failed()` raises `AttributeError: 'StructuredLogger' object has no attribute 'critical'` when it reaches the dead-letter branch.
+  - **Likely cause:** [src/app/background_jobs/queue.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/background_jobs/queue.py:157) calls `_logger.critical(...)`, but [src/app/observability/logger.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/observability/logger.py:74) only implements `debug/info/warning/error`.
+  - **Fix needed:** Add a `critical()` method to `StructuredLogger` or downgrade the call site to an implemented level. As written, every non-retryable dead-letter path is broken.
+- [PASSED] `test_reap_expired_claims_returns_rowcount`: the reaper path returns the DB rowcount for expired claims.
+- [PASSED] `test_worker_execute_job_success_marks_running_then_succeeded`: worker dispatch builds the expected `JobContext`, marks the job running, calls the handler, and marks success.
+- [PASSED] `test_worker_execute_job_dead_letters_unknown_job_types`: unknown job types are treated as non-retryable failures.
+- [PASSED] `test_worker_execute_job_dead_letters_schema_mismatch`: schema validation failures are dead-lettered as non-retryable.
+- [PASSED] `test_worker_execute_job_retries_retryable_exceptions`: retryable handler exceptions call `mark_failed(..., non_retryable=False)`.
+- [PASSED] `test_worker_execute_job_dead_letters_non_retryable_exceptions`: non-retryable handler exceptions call `mark_failed(..., non_retryable=True)`.
+- [PASSED] `test_extraction_handler_rejects_tenant_mismatch`: the extraction handler rejects mismatched tenant context before business logic runs.
+- [PASSED] `test_admin_retry_uses_same_payload_and_preserves_dead_letter`: admin retry re-enqueues a new job using the dead-letter payload and leaves the original row untouched.
+- [PASSED] `test_admin_drop_deletes_only_dead_lettered_job`: admin drop deletes the matched dead-letter row.
+- [PASSED] `test_admin_list_dead_letter_prints_empty_message`: the empty dead-letter listing path returns the expected operator-facing message.
+
+#### Spec Compliance
+- [FAILED] `test_spec_documented_worker_cli_module_is_importable`: the documented worker CLI entry point is missing.
+  - **Expected:** The module spec documents `python -m background_jobs.worker --concurrency 4`, so `background_jobs.worker` should be importable.
+  - **Actual:** Import resolution raises `ModuleNotFoundError: No module named 'background_jobs'`.
+  - **Likely cause:** Session 11 implemented [src/app/background_jobs/__main__.py](/Users/chrisilias/Desktop/Hiclone/deal-screening-agent/src/app/background_jobs/__main__.py:1) and uses `python -m app.background_jobs`, but no compatibility shim exists for the spec’s documented `background_jobs.worker` path.
+  - **Fix needed:** Either provide the documented module path as a shim/alias or explicitly update the module contract if the namespaced CLI is intended.
+
+#### Adversarial
+- [PASSED] `test_mark_failed_scrubs_pii_from_last_error`: the persisted `last_error` path redacts email/secret patterns before storage.
+- [PASSED] `test_mark_failed_scrubs_bearer_tokens`: bearer tokens are scrubbed before persistence.
+- [PASSED] `test_backoff_jitter_within_bounds`: jitter stays within the documented ±25% envelope.
+- [PASSED] `test_backoff_clamps_to_last_entry_for_high_attempts`: high attempt counts clamp to the final backoff bucket.
+
+### Regressions
+- None outside the two new background-jobs findings above. The new validator-owned coverage passed for queue retry, worker dispatch, handler tenant checks, and admin dead-letter operations.
+
+### Summary
+- **Total:** 27 passed, 2 failed, 0 blockers resolved
+- **Modules validated:** `background_jobs` (partial)
+- **Modules blocked:** `background_jobs`, `observability` logger compatibility on the dead-letter path
+
+### Handoff
+- **Status:** BLOCKED
+- **Claude should:** Fix the dead-letter logging path so non-retryable failures can reach `DEAD_LETTERED`, and reconcile the worker CLI implementation with the documented `background_jobs.worker` contract before returning Session 11 for revalidation.
+- **Blockers:** `C-017`, `C-018`
+
+---
+
+## Session 11a — 2026-04-14 — REVALIDATION
+
+### Context
+- **Reading from:** `.agent/handoff.json`, `.agent/claude_log.md` (Session 11), `src/app/background_jobs/*`, `src/app/observability/logger.py`
+- **Validating:** Claude's Session 11 fixes for `C-017` and `C-018`, plus full-suite regression coverage
+- **Claude session referenced:** Session 11
+
+### Test Results
+
+#### Correctness
+- [PASSED] `env PYTHONPATH=src python3 -m pytest -q tests/test_background_jobs.py`: Focused background-jobs validator suite passes end-to-end (`31 passed, 1 warning`).
+- [PASSED] `test_mark_failed_dead_letters_non_retryable_errors`: Non-retryable failures now reach the dead-letter path without crashing, so the queue can persist `DEAD_LETTERED` state correctly.
+- [PASSED] `test_spec_documented_worker_cli_module_is_importable`: The documented `background_jobs.worker` CLI module path is now importable.
+
+#### Spec Compliance
+- [PASSED] `env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=src python3 -m pytest -x -vv -p pytest_asyncio.plugin`: Full validator suite passes under a controlled plugin set (`146 passed, 1 warning`).
+- [PASSED] `background_jobs module contract`: Queue retry/dead-letter behavior, worker dispatch, admin dead-letter operations, and the documented worker CLI path all satisfy the validator-owned checks.
+
+#### Adversarial
+- [PASSED] `dead-letter path under non-retryable failure`: The queue no longer fails open on the critical dead-letter branch.
+
+### Regressions
+- None observed. Full-suite regression coverage passed after the Session 11 fixes.
+
+### Summary
+- **Total:** 6 passed, 0 failed, 0 blockers
+- **Modules validated:** `background_jobs`
+- **Modules blocked:** none
+
+### Handoff
+- **Status:** READY_FOR_BUILD
+- **Claude should:** Leave `C-017` and `C-018` closed. Background Jobs is validated. For future full-suite runs in this environment, use `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` and explicitly load `pytest_asyncio.plugin` to avoid unrelated ambient pytest plugins.
+- **Blockers:** None
