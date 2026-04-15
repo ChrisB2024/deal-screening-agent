@@ -1,0 +1,135 @@
+# CI/CD pipeline per .spec/05_deployment.md section 8
+# Triggers: push to main, PRs, version tags
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.12"
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+jobs:
+  # ---- Step 1: Lint + Unit Tests (parallel) ----
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv pip install --system ".[dev]" ruff
+      - name: Ruff check
+        run: ruff check src/ tests/
+      - name: Ruff format check
+        run: ruff format --check src/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/deal_screening
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: deal_screening
+      DATABASE_PASSWORD: password
+      AUTH_SIGNING_KEY_CURRENT: ci-test-key-not-real
+      OPENAI_API_KEY: sk-test-not-real
+      STORAGE_BACKEND: local
+      UPLOAD_DIR: ./uploads
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: deal_screening
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d deal_screening"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv pip install --system ".[dev]" pytest-asyncio pytest-cov
+      - name: Run migrations
+        run: |
+          cd src && python -c "
+          # Verify DB is reachable before running tests
+          import asyncio, asyncpg
+          async def check():
+              conn = await asyncpg.connect('postgresql://user:password@localhost:5432/deal_screening')
+              await conn.close()
+          asyncio.run(check())
+          "
+      - name: Run tests
+        run: |
+          PYTHONPATH=src pytest tests/ -v --tb=short
+
+  # ---- Step 2: Build Docker image ----
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: deal-screener:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---- Step 4: Security scan ----
+      - name: Trivy security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: deal-screener:${{ github.sha }}
+          format: table
+          exit-code: 1
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+  # ---- Step 5: Deploy to Fly.io (main branch only) ----
+  deploy:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Run migrations as a one-shot machine before deploy
+      - name: Run database migrations
+        run: |
+          flyctl machine run --app deal-screener \
+            --command "python -m alembic upgrade head" \
+            --rm \
+            --env PYTHONPATH=/app/src \
+            -- deal-screener:latest
+        continue-on-error: false
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only

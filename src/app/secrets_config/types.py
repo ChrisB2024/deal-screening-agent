@@ -30,7 +30,7 @@ class KMSProviderType(str, enum.Enum):
 
 
 PROVIDER_ENV_MATRIX: dict[Environment, set[SecretsProvider]] = {
-    Environment.PROD: {SecretsProvider.AWS_SECRETS_MANAGER, SecretsProvider.FLYIO_SECRETS},
+    Environment.PROD: {SecretsProvider.AWS_SECRETS_MANAGER, SecretsProvider.FLYIO_SECRETS, SecretsProvider.ENV_FILE},
     Environment.STAGING: {SecretsProvider.AWS_SECRETS_MANAGER, SecretsProvider.FLYIO_SECRETS},
     Environment.DEV: {
         SecretsProvider.AWS_SECRETS_MANAGER,

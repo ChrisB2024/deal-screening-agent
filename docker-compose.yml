@@ -1,0 +1,76 @@
+# Local development stack
+# Usage: docker compose up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: deal_screening
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d deal_screening"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: deal_screening
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/deal_screening
+    volumes:
+      - ./src:/app/src
+      - ./uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    tmpfs:
+      - /tmp/sandbox:size=100M
+
+  worker:
+    build: .
+    command: python -m background_jobs.worker --concurrency 4
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: deal_screening
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/deal_screening
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+    tmpfs:
+      - /tmp/sandbox:size=100M
+
+  migrate:
+    build: .
+    command: python -m alembic upgrade head
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: deal_screening
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/deal_screening
+    volumes:
+      - ./src:/app/src
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

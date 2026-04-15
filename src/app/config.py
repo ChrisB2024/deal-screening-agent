@@ -1,9 +1,20 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://localhost:5432/deal_screening"
+
+    @model_validator(mode="after")
+    def normalize_database_url(self):
+        """Fly Postgres sets DATABASE_URL as postgres://... but SQLAlchemy needs postgresql+asyncpg://..."""
+        url = self.database_url
+        if url.startswith("postgres://"):
+            self.database_url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://"):
+            self.database_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return self
 
     # OpenAI (for extraction service)
     openai_api_key: str = ""

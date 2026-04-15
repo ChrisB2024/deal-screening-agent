@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -41,16 +42,19 @@ class EnvFileProvider:
         self._load_file()
 
     def _load_file(self) -> None:
-        if not self._path.exists():
-            return
-        for line in self._path.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            self._values[key.strip()] = value.strip()
+        if self._path.exists():
+            for line in self._path.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                self._values[key.strip()] = value.strip()
+        # Fall back to real env vars (covers Fly.io where secrets are injected as env vars)
+        for env_key in ENV_FILE_KEY_MAP.values():
+            if env_key not in self._values and env_key in os.environ:
+                self._values[env_key] = os.environ[env_key]
 
     def load_all(self) -> dict[str, SecretValue]:
         now = datetime.now(timezone.utc)
