@@ -9,6 +9,32 @@ class DealStatus(str, enum.Enum):
     FAILED = "FAILED"
     SCORED = "SCORED"
     DECIDED = "DECIDED"
+    ARCHIVED = "ARCHIVED"
+
+
+VALID_STATE_TRANSITIONS: dict[DealStatus, set[DealStatus]] = {
+    DealStatus.UPLOADED: {DealStatus.EXTRACTED, DealStatus.FAILED},
+    DealStatus.EXTRACTED: {DealStatus.SCORED},
+    DealStatus.FAILED: {DealStatus.UPLOADED},
+    DealStatus.SCORED: {DealStatus.DECIDED},
+    DealStatus.DECIDED: {DealStatus.ARCHIVED},
+    DealStatus.ARCHIVED: set(),
+}
+
+
+class InvalidStateTransition(ValueError):
+    def __init__(self, from_status: DealStatus, to_status: DealStatus):
+        super().__init__(
+            f"Invalid state transition: {from_status.value} -> {to_status.value}"
+        )
+        self.from_status = from_status
+        self.to_status = to_status
+
+
+def validate_transition(from_status: DealStatus, to_status: DealStatus) -> None:
+    allowed = VALID_STATE_TRANSITIONS.get(from_status, set())
+    if to_status not in allowed:
+        raise InvalidStateTransition(from_status, to_status)
 
 
 class DecisionType(str, enum.Enum):
@@ -37,17 +63,6 @@ class CriterionType(str, enum.Enum):
     MUST_HAVE = "MUST_HAVE"
     NICE_TO_HAVE = "NICE_TO_HAVE"
     DEALBREAKER = "DEALBREAKER"
-
-
-class AuditAction(str, enum.Enum):
-    DEAL_UPLOADED = "DEAL_UPLOADED"
-    EXTRACTION_STARTED = "EXTRACTION_STARTED"
-    EXTRACTION_COMPLETED = "EXTRACTION_COMPLETED"
-    EXTRACTION_FAILED = "EXTRACTION_FAILED"
-    SCORING_COMPLETED = "SCORING_COMPLETED"
-    DECISION_MADE = "DECISION_MADE"
-    CRITERIA_UPDATED = "CRITERIA_UPDATED"
-    DEAL_RETRIED = "DEAL_RETRIED"
 
 
 # The 6 core extraction fields referenced in the spec

@@ -22,7 +22,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
-    AuditAction,
     ConfidenceLevel,
     DealStatus,
     DecisionType,
@@ -78,7 +77,7 @@ class Deal(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     decisions: Mapped[list["DealDecision"]] = relationship(
         back_populates="deal", cascade="all, delete-orphan"
     )
-    audit_logs: Mapped[list["AuditLog"]] = relationship(
+    audit_logs: Mapped[list["DealAuditLog"]] = relationship(
         back_populates="deal", cascade="all, delete-orphan"
     )
 
@@ -180,32 +179,28 @@ class DealDecision(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     deal: Mapped["Deal"] = relationship(back_populates="decisions")
 
 
-class AuditLog(Base, UUIDPrimaryKeyMixin):
-    """Append-only audit trail for all deal state transitions.
+class DealAuditLog(Base):
+    """Append-only audit trail per the observability spec deal_audit_log schema.
 
-    Invariant (from spec):
-    - No state transition should occur without a corresponding audit log entry.
+    Written in the same DB transaction as the state change it records.
+    The application role has INSERT and SELECT only — no UPDATE or DELETE.
     """
 
-    __tablename__ = "audit_logs"
+    __tablename__ = "deal_audit_log"
 
+    audit_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     deal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("deals.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-
-    action: Mapped[AuditAction] = mapped_column(
-        Enum(AuditAction, native_enum=False), nullable=False
-    )
-    from_status: Mapped[DealStatus | None] = mapped_column(
-        Enum(DealStatus, native_enum=False), nullable=True
-    )
-    to_status: Mapped[DealStatus | None] = mapped_column(
-        Enum(DealStatus, native_enum=False), nullable=True
-    )
-    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    before_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    after_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True, default=dict)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

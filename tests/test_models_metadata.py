@@ -1,5 +1,5 @@
 from app.models.criteria import CriteriaConfig
-from app.models.deal import AuditLog, Deal, DealDecision, DealScore, ExtractedField
+from app.models.deal import DealAuditLog, Deal, DealDecision, DealScore, ExtractedField
 
 
 def test_expected_tables_exist_in_metadata():
@@ -10,7 +10,7 @@ def test_expected_tables_exist_in_metadata():
         "extracted_fields",
         "deal_scores",
         "deal_decisions",
-        "audit_logs",
+        "deal_audit_log",
         "criteria_configs",
         "criteria",
     }.issubset(table_names)
@@ -27,7 +27,7 @@ def test_foreign_keys_match_builder_design():
     extracted_field_fk = next(iter(ExtractedField.__table__.c.deal_id.foreign_keys))
     decision_score_fk = next(iter(DealDecision.__table__.c.score_id.foreign_keys))
     score_config_fk = next(iter(DealScore.__table__.c.criteria_config_id.foreign_keys))
-    audit_log_fk = next(iter(AuditLog.__table__.c.deal_id.foreign_keys))
+    audit_log_fk = next(iter(DealAuditLog.__table__.c.deal_id.foreign_keys))
 
     assert extracted_field_fk.ondelete == "CASCADE"
     assert decision_score_fk.ondelete == "SET NULL"

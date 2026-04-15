@@ -1,5 +1,4 @@
 from app.models.enums import (
-    AuditAction,
     ConfidenceLevel,
     CORE_EXTRACTION_FIELDS,
     CriterionType,
@@ -7,7 +6,11 @@ from app.models.enums import (
     DecisionType,
     FieldExtractionStatus,
     MIN_FIELDS_FOR_EXTRACTION,
+    VALID_STATE_TRANSITIONS,
+    validate_transition,
+    InvalidStateTransition,
 )
+import pytest
 
 
 def test_deal_statuses_match_spec_state_machine():
@@ -17,6 +20,7 @@ def test_deal_statuses_match_spec_state_machine():
         "FAILED",
         "SCORED",
         "DECIDED",
+        "ARCHIVED",
     }
 
 
@@ -47,14 +51,24 @@ def test_core_extraction_fields_and_threshold_match_spec():
     assert MIN_FIELDS_FOR_EXTRACTION == 3
 
 
-def test_audit_actions_cover_expected_lifecycle_events():
-    assert {action.value for action in AuditAction} == {
-        "DEAL_UPLOADED",
-        "EXTRACTION_STARTED",
-        "EXTRACTION_COMPLETED",
-        "EXTRACTION_FAILED",
-        "SCORING_COMPLETED",
-        "DECISION_MADE",
-        "CRITERIA_UPDATED",
-        "DEAL_RETRIED",
-    }
+def test_valid_state_transitions_match_spec():
+    assert VALID_STATE_TRANSITIONS[DealStatus.UPLOADED] == {DealStatus.EXTRACTED, DealStatus.FAILED}
+    assert VALID_STATE_TRANSITIONS[DealStatus.EXTRACTED] == {DealStatus.SCORED}
+    assert VALID_STATE_TRANSITIONS[DealStatus.FAILED] == {DealStatus.UPLOADED}
+    assert VALID_STATE_TRANSITIONS[DealStatus.SCORED] == {DealStatus.DECIDED}
+    assert VALID_STATE_TRANSITIONS[DealStatus.DECIDED] == {DealStatus.ARCHIVED}
+    assert VALID_STATE_TRANSITIONS[DealStatus.ARCHIVED] == set()
+
+
+def test_validate_transition_allows_valid():
+    validate_transition(DealStatus.UPLOADED, DealStatus.EXTRACTED)
+    validate_transition(DealStatus.SCORED, DealStatus.DECIDED)
+
+
+def test_validate_transition_rejects_invalid():
+    with pytest.raises(InvalidStateTransition):
+        validate_transition(DealStatus.SCORED, DealStatus.UPLOADED)
+    with pytest.raises(InvalidStateTransition):
+        validate_transition(DealStatus.DECIDED, DealStatus.SCORED)
+    with pytest.raises(InvalidStateTransition):
+        validate_transition(DealStatus.ARCHIVED, DealStatus.UPLOADED)
