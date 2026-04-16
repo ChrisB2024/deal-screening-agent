@@ -8,12 +8,22 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def normalize_database_url(self):
-        """Fly Postgres sets DATABASE_URL as postgres://... but SQLAlchemy needs postgresql+asyncpg://..."""
+        """Fly Postgres sets DATABASE_URL as postgres://... but SQLAlchemy needs postgresql+asyncpg://...
+        Also strips sslmode param which asyncpg doesn't support as a query arg."""
         url = self.database_url
         if url.startswith("postgres://"):
-            self.database_url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
         elif url.startswith("postgresql://"):
-            self.database_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # asyncpg doesn't accept sslmode — strip it; ssl is handled via connect_args
+        if "sslmode=" in url:
+            from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query)
+            params.pop("sslmode", None)
+            cleaned_query = urlencode(params, doseq=True)
+            url = urlunparse(parsed._replace(query=cleaned_query))
+        self.database_url = url
         return self
 
     # OpenAI (for extraction service)

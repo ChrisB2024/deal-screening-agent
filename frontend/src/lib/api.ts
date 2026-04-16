@@ -1,16 +1,31 @@
+import { getAccessToken } from "./auth";
+
 const API_BASE = "/api/v1";
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = await getAccessToken();
+  if (!token) {
+    // Force redirect to login
+    window.location.href = "/login";
+    throw new Error("Not authenticated");
+  }
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    ...Object.fromEntries(
+      Object.entries(options?.headers || {}).filter(([, v]) => v != null) as [string, string][]
+    ),
+  };
+
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: {
-      "X-Tenant-ID": TENANT_ID,
-      "X-User-ID": TENANT_ID,
-      ...options?.headers,
-    },
+    headers,
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      window.location.href = "/login";
+      throw new Error("Session expired");
+    }
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || body.message || `Request failed: ${res.status}`);
   }

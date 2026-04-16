@@ -1,6 +1,7 @@
-import { Link, Outlet, useLocation } from "react-router-dom";
-import { BarChart3, Upload, Settings, FileText } from "lucide-react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { BarChart3, Upload, Settings, FileText, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth";
 
 const navItems = [
   { to: "/", label: "Deals", icon: FileText },
@@ -10,6 +11,13 @@ const navItems = [
 
 export default function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  async function handleLogout() {
+    await logout();
+    navigate("/login");
+  }
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -36,6 +44,16 @@ export default function Layout() {
               </Link>
             ))}
           </nav>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="text-sm text-muted-foreground">{user?.email}</span>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
+          </div>
         </div>
       </header>
       <main className="max-w-7xl mx-auto px-6 py-6">

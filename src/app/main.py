@@ -1,8 +1,11 @@
+import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.deals import router as deals_router
 from app.api.criteria import router as criteria_router
@@ -11,6 +14,8 @@ from app.input_validation import InputValidationMiddleware
 from app.observability import ObservabilityMiddleware, health_router
 from app.observability.logger import request_id_var
 from app.rate_limiter import RateLimitMiddleware, init_rate_limiter
+
+STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
 
 
 @asynccontextmanager
@@ -36,15 +41,22 @@ async def lifespan(app: FastAPI):
             previous_kid=f"key_{prev.version}" if prev else None,
         )
 
-    # Register background job handlers
-    from app.background_jobs import init_handlers
+    # Register background job handlers and start in-process worker
+    from app.background_jobs import init_handlers, Worker
+    from app.database import async_session_factory
     init_handlers()
+
+    worker = Worker(async_session_factory, concurrency=2)
+    worker_task = asyncio.create_task(worker.run())
 
     # Rate limiter — uses in-memory store for portfolio phase
     rl_config = config.rate_limit
     init_rate_limiter(trusted_proxies=list(rl_config.trusted_proxy_cidrs))
 
     yield
+
+    worker.stop()
+    await worker_task
     await sc_shutdown()
 
 
@@ -88,3 +100,15 @@ app.include_router(health_router)
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(deals_router, prefix="/api/v1/deals", tags=["deals"])
 app.include_router(criteria_router, prefix="/api/v1/criteria", tags=["criteria"])
+
+# Serve frontend static files (only if built frontend exists)
+if STATIC_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="static-assets")
+
+    @app.get("/{path:path}")
+    async def spa_fallback(path: str):
+        """Serve index.html for all non-API routes (SPA client-side routing)."""
+        file = STATIC_DIR / path
+        if file.is_file():
+            return FileResponse(file)
+        return FileResponse(STATIC_DIR / "index.html")

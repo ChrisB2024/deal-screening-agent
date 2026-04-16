@@ -13,12 +13,54 @@ from .schemas import (
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
+    RegisterRequest,
     TokenResponse,
     UserInfo,
 )
 from .service import InvalidCredentials, InvalidRefreshToken, SessionRevoked
 
 router = APIRouter()
+
+# Default tenant for self-registration (single-tenant portfolio phase)
+_DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
+
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(
+    body: RegisterRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select
+    from app.models.user import User
+
+    existing = await db.execute(select(User).where(User.email == body.email))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = await service.create_user(
+        db, tenant_id=_DEFAULT_TENANT_ID, email=body.email, password=body.password,
+    )
+
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("User-Agent")
+    bundle = await service.login(
+        db, email=body.email, password=body.password,
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
+
+    return TokenResponse(
+        access_token=bundle.access_token,
+        expires_in=bundle.expires_in,
+        refresh_token=bundle.refresh_token,
+        refresh_expires_in=bundle.refresh_expires_in,
+        user=UserInfo(
+            user_id=bundle.user_id,
+            tenant_id=bundle.tenant_id,
+            email=bundle.email,
+        ),
+    )
 
 
 @router.post("/login", response_model=TokenResponse)

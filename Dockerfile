@@ -1,5 +1,5 @@
 # Single-stage build for fast deploys
-# One image, two entrypoints (api + worker) per spec
+# Frontend is pre-built (frontend/dist/) before docker build
 
 FROM python:3.12-slim-bookworm
 
@@ -18,10 +18,18 @@ COPY alembic/ alembic/
 COPY alembic.ini .
 COPY src/ src/
 
+# Copy pre-built frontend
+COPY frontend/dist/ static/
+
+# Ensure app user can read all files
+RUN chmod -R a+rX /app
+
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
-RUN mkdir -p /tmp/sandbox && chown app:app /tmp/sandbox
+RUN mkdir -p /tmp/sandbox /tmp/uploads && chown app:app /tmp/sandbox /tmp/uploads
+
+ENV UPLOAD_DIR=/tmp/uploads
 
 USER app
 

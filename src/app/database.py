@@ -9,11 +9,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import settings
 
+import os
+
+# Fly Postgres uses internal networking — no SSL needed
+_connect_args: dict = {}
+if os.environ.get("FLY_APP_NAME"):
+    _connect_args["ssl"] = False
+
 engine = create_async_engine(
     settings.database_url,
     echo=False,
     pool_size=10,
     max_overflow=20,
+    connect_args=_connect_args,
 )
 
 async_session_factory = async_sessionmaker(
